@@ -217,8 +217,8 @@ def main():
         print(dict_auroc)
         df_auroc = pd.DataFrame(dict_auroc).melt().reset_index()
         print(df_auroc.head())
-        df_auroc['index'] = df_auroc['index'].astype(str)
         df_auroc['index'] = df_auroc['index'] + 1
+        df_auroc['index'] = df_auroc['index'].astype(str)
         fig = sns.relplot(data=df_auroc,  x='index', y='value', hue='variable')
         try:
             fig.savefig(config.OUTPUT_PATH + 'AUROC_plot.jpg', bbox_inches='tight', dpi=100)

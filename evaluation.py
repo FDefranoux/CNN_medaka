@@ -1,6 +1,7 @@
 # import the necessary packages
 from pyimagesearch.classifier import Larval_MLPhenotyper
-from pyimagesearch.ziramutils import get_dataloader, ZiramDataset, MetricRecorder
+from pyimagesearch.ziramutils import get_dataloader, ZiramDataset
+from pyimagesearch.metrics import MetricRecorder
 from torchvision import transforms
 from torch.nn import Softmax
 from torch import nn

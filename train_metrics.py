@@ -122,8 +122,8 @@ def main():
         mean_train_metrics = train_metrics.compute_array()
         mean_random_metrics = random_metrics.compute_array()
         print(mean_train_metrics)
-        dict_auroc['Training'].append(mean_train_metrics)
-        dict_auroc['Random'].append(mean_random_metrics)
+        dict_auroc['Training'].append(mean_train_metrics['Auroc'])
+        dict_auroc['Random'].append(mean_random_metrics['Auroc'])
 ############################### VALIDATION ################################################### 
 
         with torch.no_grad():  # Prevent the optimizer to compute gradients
@@ -153,7 +153,7 @@ def main():
                                             loss_reg=regression_loss, loss_tot=crit_loss)
             
         mean_val_metrics = val_metrics.compute_array()
-        dict_auroc['Validation'].append(mean_val_metrics)
+        dict_auroc['Validation'].append(mean_val_metrics['Auroc'])
         print(mean_val_metrics)
             
 
@@ -214,6 +214,7 @@ def main():
         mlflow.end_run()
     
     if config.PLOT_AUROC:
+        print(dict_auroc)
         df_auroc = pd.DataFrame(dict_auroc).melt().reset_index()
         print(df_auroc.head())
         df_auroc['index'] = df_auroc['index'].astype(str)

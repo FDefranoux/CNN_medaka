@@ -216,7 +216,7 @@ def main():
     if config.PLOT_AUROC:
         df_auroc = pd.DataFrame(dict_auroc).melt().reset_index()
         print(df_auroc.head())
-        df['index'] = df['index'].astype(str)
+        df_auroc['index'] = df_auroc['index'].astype(str)
         df_auroc['index'] = df_auroc['index'] + 1
         fig = sns.relplot(data=df_auroc,  x='index', y='value', hue='variable')
         try:

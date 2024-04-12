@@ -219,7 +219,7 @@ def main():
         print(df_auroc.head())
         df_auroc['index'] = df_auroc['index'] + 1
         df_auroc['index'] = df_auroc['index'].astype(str)
-        fig = sns.relplot(data=df_auroc,  x='index', y='value', hue='variable')
+        fig = sns.relplot(kind='line', data=df_auroc,  x='index', y='value', hue='variable')
         try:
             fig.savefig(config.OUTPUT_PATH + 'AUROC_plot.jpg', bbox_inches='tight', dpi=100)
         except AttributeError:

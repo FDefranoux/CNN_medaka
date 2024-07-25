@@ -2,11 +2,9 @@
 
 # import the necessary packages
 from pyimagesearch import config
-if config.MLFLOW:
-    import mlflow
-from pyimagesearch.classifier import Larval_MLPhenotyper
+from pyimagesearch.classifier import Larval_MLClassifier
 import sklearn
-from pyimagesearch.ziramutils import get_dataloader, train_val_split, ZiramDataset 
+from pyimagesearch.ziramutils import ZiramDataset, train_val_split
 from pyimagesearch.metrics import MetricRecorder
 from torch import optim
 from tqdm import tqdm 
@@ -19,157 +17,168 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import yaml
+from pyimagesearch.config import params_fromYAML
+import argparse
+
+def main(yaml_file):
 
 
-def main():
+    train_kwargs, model_kwargs, hyperparams, params, metrics_kwargs = params_fromYAML(yaml_file)
+    numClasses = train_kwargs.pop('num_class')
+    numEpochs = params['EPOCHS']
 
 ####################### PARAMS settings (to be put in config.py) #####################################
-
-    # Recuperation and printing and saving the parameters of the run
-    ABS_PATH = os.path.dirname(os.path.abspath(__file__))
-    config.modif_params_argparse()
-    hyperparam = config.HYPERPARAMS
     
-    yaml_file=open(os.path.join(config.OUTPUT_PATH, "run_info.yaml"),"w")
-    yaml.dump(hyperparam, yaml_file)
-    yaml_file.close()
+    # # Recuperation and printing and saving the parameters of the run
+    # ABS_PATH = o, flush=Trues.path.dirname(os.path.abspath(__file__))
+    # config.modif_params_argparse()
+    # # hyperparam = config.HYPERPARAMS
+    # yaml_file=open(os.path.join(config.OUTPUT_PATH, "run_info.yaml"),"w")
+    # yaml.dump(hyperparam, yaml_file)
+    # yaml_file.close()
 
-    run_name = hyperparam.pop('NAME')
-    exp_name = hyperparam.pop('EXP_NAME')
-    print(f'[INFO] Parameters of the run ({run_name}):\n')
-    print(pd.DataFrame(hyperparam, index=['Value']).T.to_markdown(), '\n')
+    if params['MLFLOW']:
+        import mlflow
+        print(f'\n\n[INFO] Starting MLFLOW run\n', flush=True)
+        mlflow.set_tracking_uri(params['MLFLOW_OUT'])
+        mlflow.set_experiment(params['EXP_NAME'])
+        mlflow.start_run(run_name=params['NAME'])
 
-    if config.MLFLOW:
-        print(f'\n\n[INFO] Starting MLFLOW run ({run_name}) on {exp_name} experiment\n')
-        mlflow.set_tracking_uri(config.ML_OUTPUT)
-        mlflow.set_experiment(exp_name)
-        mlflow.start_run(run_name=run_name)
-        mlflow.log_artifact(os.path.join(ABS_PATH, 'pyimagesearch', 'config.py'))
-        mlflow.log_artifact(os.path.join(config.OUTPUT_PATH, "run_info.yaml"))
-        for key, item in hyperparam.items():
+        mlflow.log_artifact(os.path.join(params['OUTPUT_PATH'], "run_info.yaml"))
+        for key, item in hyperparams.items():
             mlflow.log_param(key, item)
     
-    if config.PLOT_AUROC:
-        df_train = pd.DataFrame(columns=['class_' + str(n) for n in range(hyperparam['NUM_CLASS'])], index=range(1, hyperparam['EPOCHS']+1, 1))
-        df_random = pd.DataFrame(columns=['class_' + str(n) for n in range(hyperparam['NUM_CLASS'])], index=range(1, hyperparam['EPOCHS']+1, 1))
-        df_val = pd.DataFrame(columns=['class_' + str(n) for n in range(hyperparam['NUM_CLASS'])], index=range(1, hyperparam['EPOCHS']+1, 1))
+
 
 #################### Initialisation of training ################################
 
     # Creating and Loading the datasets
-    trainDataset = ZiramDataset(path=hyperparam['BASE_PATH'],
-                                dataset='training_set', 
-                                filename = hyperparam['FILENAME'],
-                                label=hyperparam['LABEL'],
-                                num_class=hyperparam['NUM_CLASS'],
-                                im_size=hyperparam['IMAGE_SIZE'],
-                                mean=config.MEAN, 
-                                std=config.STD,
-                                augment=True)
+    split_kwargs = {key: train_kwargs.pop(key) for key in ['validation_ratio', 'batch_size', 'shuffle']}
+    Dataset = ZiramDataset(mode='training', **train_kwargs)
+    assert int(Dataset.num_label) == int(numClasses), f'Numbers of labels ({Dataset.num_label}) not corresponding to class number ({numClasses})'
 
-    (trainDataset, valDataset) = train_val_split(dataset=trainDataset, valSplit=0.2)  # training and validation data split
-    trainLoader = get_dataloader(trainDataset, hyperparam['BATCH_SIZE'])  # training data loader per batch
-    valLoader = get_dataloader(valDataset, hyperparam['BATCH_SIZE'])  # validation data loader per batch
+    if params['PLOT_AUROC']:
+        df_train = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))
+        df_random = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))
+        df_val = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))    
+    
+
+    trainLoader, valLoader = train_val_split(dataset=Dataset, **split_kwargs)
+
+    
+    ### IF PROBLEM UNCOOMENT THIS BLOCK
+    # trainDataset = ZiramDataset(path=hyperparam['BASE_PATH'],
+    #                             dataset='training_set', 
+    #                             filename = hyperparam['FILENAME'],
+    #                             label=hyperparam['LABEL'],
+    #                             num_class=numClasses,
+    #                             im_size=hyperparam['IMAGE_SIZE'],
+    #                             mean=config.MEAN, 
+    #                             std=config.STD,
+    #                             augment=True)
+    # (trainDataset, valDataset) = train_val_split(dataset=trainDataset, valSplit=params.VALIDATION_RATIO)  # training and validation data split
+    # trainLoader = get_dataloader(trainDataset, hyperparams['BATCH_SIZE'])  # training data loader per batch
+    # valLoader = get_dataloader(valDataset, hyperparams['BATCH_SIZE'])  # validation data loader per batch
 
     # build the custom model
-    model = Larval_MLPhenotyper(numClasses=hyperparam['NUM_CLASS']).to(config.DEVICE)
+    model = Larval_MLClassifier(**model_kwargs).to(params['DEVICE'])
+    # model = Larval_MLClassifier(numClasses=hyperparams['NUM_CLASS']).to(params['DEVICE'])
 
     # initialize loss function (criterion) and optimizer
-    criterion_classif = torch.nn.CrossEntropyLoss()
-    criterion_regression = torch.nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=hyperparam['LR'])
+    criterion = model.criterion()
+    optimizer = optim.Adam(model.parameters(), lr=hyperparams['LR'])
     best_valauroc, n_max= 0, 0
     dict_auroc = {'Training':[], 'Validation':[], 'Random':[]}
 
 ############################## TRAINING #########################################
     
     # loop over epochs
-    for epoch in range(hyperparam['EPOCHS']):
-        print(f'\nEpoch {epoch + 1 } / {hyperparam["EPOCHS"]}')
+    for epoch in range(numEpochs):
+        print(f'\nEpoch {epoch + 1 } / {numEpochs}', flush=True)
         
         model.train()  # set the model in training mode
 
-        train_metrics = MetricRecorder(num_class=hyperparam['NUM_CLASS'],  prefix='Train', metric_ls=[])
-        random_metrics = MetricRecorder(num_class=hyperparam['NUM_CLASS'],  prefix='Random', metric_ls=['Auroc'])
+        train_metrics = MetricRecorder(num_class=numClasses,  prefix='Train', metric_ls=[])
+        random_metrics = MetricRecorder(num_class=numClasses,  prefix='Random', metric_ls=['Auroc'])
 
         # loop over the training set
         tqdm_object = tqdm(trainLoader, total=len(trainLoader), desc=f'Training', colour='#00ff00')
         for batch in tqdm_object:
 
-            image_batch, target_class, target_reg = (batch['image'].to(config.DEVICE), batch['label_class'].to(config.DEVICE), batch['label_reg'].to(config.DEVICE))
-            target_reg = torch.unsqueeze(target_reg, -1)
+            image_batch, target = (batch['image'].to(params['DEVICE']), batch['label_' + str(model_kwargs["mode"])].to(params['DEVICE']))
+            if  model_kwargs['mode'] == 'regression':
+                target = torch.unsqueeze(target, -1)
 
             # Compute loss
             out_dict = model(image_batch)
-            logits_class, coefficient_reg = out_dict['logits'], out_dict['coefficient']
-            random_logits = torch.from_numpy(np.random.rand(*logits_class.shape))
+            logits = out_dict['logits']
+            random_logits = torch.from_numpy(np.random.rand(*logits.shape))
+            if  model_kwargs['mode'] == 'regression':
+                crit_loss = criterion(logits, target.type(torch.FloatTensor))
+            else:
+                crit_loss = criterion(logits, target)
 
-            # print(len(logits_class), len(target_class))
-            classif_loss = criterion_classif(logits_class, target_class).type(torch.FloatTensor)
-            regression_loss = criterion_regression(coefficient_reg, target_reg.type(torch.FloatTensor)) 
 
             # Update weight of model (retropagation)
-            crit_loss = classif_loss + regression_loss
             optimizer.zero_grad()  # mise a zero des gradients
-            crit_loss.type(torch.FloatTensor).backward()         # Calcul de la loss
+            if  model_kwargs['mode'] == 'regression':
+                crit_loss.type(torch.FloatTensor).backward()         # Calcul de la loss
+            else:
+                crit_loss.backward()  
+
             optimizer.step()        # calcul des gradient et retropagation
 
-            random_metrics.metric_update(logits=random_logits, targets=target_class)
-            train_metrics.metric_update(logits=logits_class, targets=target_class, loss_class=classif_loss, 
-                                 loss_reg=regression_loss, loss_tot=crit_loss)
+            random_metrics.metric_update(logits=random_logits, targets=target)
+            train_metrics.metric_update(logits=logits, targets=target, loss=crit_loss)
         
 
         mean_train_metrics = train_metrics.compute_array()
         mean_random_metrics = random_metrics.compute_array()
-        print(mean_train_metrics)
         dict_auroc['Training'].append(mean_train_metrics['Auroc'])
         dict_auroc['Random'].append(mean_random_metrics['Auroc'])
+
 ############################### VALIDATION ################################################### 
 
         with torch.no_grad():  # Prevent the optimizer to compute gradients
             model.eval()  # set the model in evaluation mode
         
-            val_metrics = MetricRecorder(num_class=hyperparam['NUM_CLASS'],  prefix='Validation', metric_ls=[])
+            val_metrics = MetricRecorder(num_class=numClasses,  prefix='Validation', metric_ls=[])
 
             tqdm_object = tqdm(valLoader, total=len(valLoader), desc=f'Validation', colour='blue')
             for batch in tqdm_object:  # loop over the validation set
 
                 # send the input to the device
-                image_batch, target_class, target_reg = (batch['image'].to(config.DEVICE), batch['label_class'].to(config.DEVICE), batch['label_reg'].to(config.DEVICE))
-                target_reg = torch.unsqueeze(target_reg, -1)
+                image_batch, target = (batch['image'].to(params['DEVICE']), batch['label_' + str(model_kwargs["mode"])].to(params['DEVICE']))
+                if model_kwargs['mode'] == 'regression':
+                    target = torch.unsqueeze(target, -1)
                 
                 # make the predictions and calculate the validation loss
                 out_dict = model(image_batch)
-                logits_class, coefficient_reg = out_dict['logits'], out_dict['coefficient']
+                logits = out_dict['logits']
+                crit_loss = criterion(logits, target)
 
-                classif_loss = criterion_classif(logits_class, target_class)
-                regression_loss = criterion_regression(coefficient_reg, target_reg)
-                crit_loss = classif_loss + regression_loss
                 
                 # pass the output logits through the softmax layer to get
                 # output predictions, and calculate the number of correct
                 # predictions
-                val_metrics.metric_update(logits=logits_class, targets=target_class, loss_class=classif_loss, 
-                                            loss_reg=regression_loss, loss_tot=crit_loss)
+                val_metrics.metric_update(logits=logits, targets=target, loss=crit_loss)
             
         mean_val_metrics = val_metrics.compute_array()
         dict_auroc['Validation'].append(mean_val_metrics['Auroc'])
-        print(mean_val_metrics)
+        print(dict_auroc, flush=True)
             
 
 ####################### RESULTS saving ###########################################
 
         # Compute and update results
-
-        
         # MLflow save training history
-        if config.MLFLOW:
+        if params['MLFLOW']:
             train_metrics.save_mlflow(epoch=epoch+1, mean=False)
             val_metrics.save_mlflow(epoch=epoch+1, mean=False)
             random_metrics.save_mlflow(epoch=epoch+1, mean=True)
         
-        if config.PLOT_AUROC:
-            # print(len(train_metrics), df_train.columns)
+        if params['PLOT_AUROC']:
+            # print(len(train_metrics), df_train.columns, flush=True)
             df_train.loc[epoch+1] = train_metrics.dict_array['Auroc']
             df_val.loc[epoch+1] = val_metrics.dict_array['Auroc']
             df_random.loc[epoch+1] = random_metrics.dict_array['Auroc']
@@ -177,13 +186,12 @@ def main():
             # dict_auroc['train'].append(mean_train_metrics)
             # dict_auroc['random'].append(mean_random_metrics)
             # dict_auroc['val'].append(mean_val_metrics)
-          
-            
+
 
         # recording best weights of the run
         if mean_val_metrics['Auroc'] > best_valauroc:
             model_state_dict = model.state_dict()
-            torch.save(model_state_dict, config.MODEL_PATH)
+            torch.save(model_state_dict, os.path.join(params['OUTPUT_PATH'], 'model.pth'))
             best_state_dict = {
                 # "model": model.state_dict(),
                 # "optimizer": optimizer.state_dict(),
@@ -196,37 +204,40 @@ def main():
         else:
             n_max = 0
         if n_max >= 5: 
-            print(f'[INFO] AUROC is at max, stopping the run after  {epoch +1 } epochs')
+            print(f'[INFO] AUROC is at max, stopping the run after  {epoch +1 } epochs', flush=True)
             break
 
 
 ######################### ENDING #####################################
 
     # serialize the model state to disk
-    print('\n[INFO] Best Validation AUROC at epoch ', best_state_dict['epoch'] , ': ', best_state_dict['auroc'])
+    print('\n[INFO] Best Validation AUROC at epoch ', best_state_dict['epoch'] , ': ', best_state_dict['auroc'], flush=True)
     # plot_results(H)
     
-    if config.MLFLOW:
+    if params['MLFLOW']:
         try:
             mlflow.pytorch.log_state_dict(model_state_dict, artifact_path='best_auroc')
+            mlflow.end_run()
         except Exception as err:
-            print( '\nERR state_dict : ', err)
-        mlflow.end_run()
+            print( '\nERR state_dict : ' + str(err), flush=True )
     
-    if config.PLOT_AUROC:
-        print(dict_auroc)
-        df_auroc = pd.DataFrame(dict_auroc).melt().reset_index()
+    if params['PLOT_AUROC']:
+        df_auroc = pd.DataFrame(dict_auroc)
         print(df_auroc.head())
-        df_auroc['index'] = df_auroc['index'] + 1
-        df_auroc['index'] = df_auroc['index'].astype(str)
-        fig = sns.relplot(kind='line', data=df_auroc,  x='index', y='value', hue='variable')
+        df_auroc['epochs'] = df_auroc.index + 1
+        df_auroc['epochs'] = df_auroc['epochs'].astype(str)
+        df_auroc = df_auroc.melt(id_vars=['epochs'])
+        print(df_auroc.head())
+        fig = sns.relplot(data=df_auroc,  x='epochs', y='value', hue='variable', kind='line')
         try:
-            fig.savefig(config.OUTPUT_PATH + 'AUROC_plot.jpg', bbox_inches='tight', dpi=100)
+            fig.savefig(os.path.join(params['OUTPUT_PATH'], 'AUROC_plot.jpg'), bbox_inches='tight', dpi=100)
         except AttributeError:
-            fig.get_figure().savefig(config.OUTPUT_PATH + 'AUROC_plot.jpg', bbox_inches='tight', dpi=100)
-        print(f"\n({config.OUTPUT_PATH + 'AUROC_plot.jpg'})\n")
-
+            fig.get_figure().savefig(os.path.join(params['OUTPUT_PATH'], 'AUROC_plot.jpg'), bbox_inches='tight', dpi=100)
+        print(f"\n({os.path.join(params['OUTPUT_PATH'], 'AUROC_plot.jpg')})\n", flush=True)
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description="Training parameters")
+    parser.add_argument("-Y", "--yaml_file", type=str, help='Path of the YAML file containing the necessary information to run the training')
+    args = parser.parse_args()
+    main(yaml_file = args.yaml_file)

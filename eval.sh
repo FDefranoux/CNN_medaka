@@ -14,4 +14,4 @@
 
 
 # LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
-/hps/software/users/birney/fanny/default/bin/python /nfs/research/birney/users/fanny/medaka/ziram_analysis/CNN_medaka/train_metrics.py
+/hps/software/users/birney/fanny/default/bin/python /nfs/research/birney/users/fanny/medaka/ziram_analysis/CNN_medaka/evaluation.py

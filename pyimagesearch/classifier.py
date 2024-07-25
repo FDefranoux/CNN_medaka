@@ -1,8 +1,8 @@
 from torch import nn, hub
 
 
-class Larval_MLPhenotyper(nn.Module):
-    def __init__(self, numClasses, freeze=True,
+class Larval_MLClassifier(nn.Module):
+    def __init__(self, numClasses, freeze=True, mode='categorical',
                  model_dict={'repo_or_dir': 'pytorch/vision:v0.10.0',
                              'model': 'resnet18',
                              'pretrained': True,
@@ -13,6 +13,7 @@ class Larval_MLPhenotyper(nn.Module):
         self.model_dict = model_dict
         self.baseModel = hub.load(**model_dict)
         self.encoding_size = self.baseModel.fc.out_features
+        self.mode = mode
 
         # Freeze the base model's weights (and omit last dense layer)
         if freeze:
@@ -21,15 +22,19 @@ class Larval_MLPhenotyper(nn.Module):
                     param.requires_grad = False
 
         #QUESTION : Can we define the regression as a 1 class model ???
-        self.fc_classif = nn.Linear(self.baseModel.fc.out_features, numClasses)
-        self.fc_regress = nn.Linear(self.baseModel.fc.out_features, 1)
+        if self.mode == 'categorical':
+            self.fc = nn.Linear(self.baseModel.fc.out_features, numClasses)
+            self.criterion = nn.CrossEntropyLoss
+        elif self.mode == 'regression':
+            self.fc = nn.Linear(self.baseModel.fc.out_features, 1)
+            self.criterion = nn.MSELoss
         
     def forward(self, x):
         # pass the inputs through the base model to get the features
         # and then pass the features through of fully connected layer
         # to get our output logits
         encoding = self.baseModel(x)
-        logits = self.fc_classif(encoding)
-        coefficient = self.fc_regress(encoding)
+        logits = self.fc(encoding)
+        # coefficient = self.fc_regress(encoding)
         # return the classifier outputs
-        return {'logits': logits, 'coefficient': coefficient, 'encoding': encoding}
+        return {'logits': logits, 'encoding': encoding}

@@ -22,7 +22,6 @@ import argparse
 
 def main(yaml_file):
 
-
     train_kwargs, model_kwargs, hyperparams, params, metrics_kwargs = params_fromYAML(yaml_file)
     numClasses = train_kwargs.pop('num_class')
     numEpochs = params['EPOCHS']
@@ -46,6 +45,16 @@ def main(yaml_file):
 
         mlflow.log_artifact(os.path.join(params['OUTPUT_PATH'], "run_info.yaml"))
         for key, item in hyperparams.items():
+            print('MLFLOW', key)
+            mlflow.log_param(key, item)
+        supp_params = dict(model=model_kwargs['model_dict']['model'],
+                            filename=train_kwargs['filename'],
+                            label=train_kwargs['label'],
+                            model_mode=model_kwargs['mode'], 
+                            set='training')
+        
+        for key, item in supp_params.items():
+            print('MLFLOW', key)
             mlflow.log_param(key, item)
     
 
@@ -57,10 +66,10 @@ def main(yaml_file):
     Dataset = ZiramDataset(mode='training', **train_kwargs)
     assert int(Dataset.num_label) == int(numClasses), f'Numbers of labels ({Dataset.num_label}) not corresponding to class number ({numClasses})'
 
-    if params['PLOT_AUROC']:
-        df_train = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))
-        df_random = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))
-        df_val = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))    
+    # if params['PLOT_AUROC']:
+    #     df_train = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))
+    #     df_random = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))
+    #     df_val = pd.DataFrame(columns=['class_' + str(n) for n in range(numClasses)], index=range(1, numEpochs +1, 1))    
     
 
     trainLoader, valLoader = train_val_split(dataset=Dataset, **split_kwargs)
@@ -87,8 +96,11 @@ def main(yaml_file):
     # initialize loss function (criterion) and optimizer
     criterion = model.criterion()
     optimizer = optim.Adam(model.parameters(), lr=hyperparams['LR'])
-    best_valauroc, n_max= 0, 0
-    dict_auroc = {'Training':[], 'Validation':[], 'Random':[]}
+    if model_kwargs['mode'] == 'categorical':
+        best_metric, n_max= 0, 0
+    elif model_kwargs['mode'] == 'regression':
+        best_metric, n_max= 100, 0
+    if params['PLOT_AUROC']: dict_auroc = {'Training':[], 'Validation':[], 'Random':[]}
 
 ############################## TRAINING #########################################
     
@@ -98,8 +110,8 @@ def main(yaml_file):
         
         model.train()  # set the model in training mode
 
-        train_metrics = MetricRecorder(num_class=numClasses,  prefix='Train', metric_ls=[])
-        random_metrics = MetricRecorder(num_class=numClasses,  prefix='Random', metric_ls=['Auroc'])
+        train_metrics = MetricRecorder(num_class=numClasses,  prefix='Train', metric_ls=metrics_kwargs['TRAINING'])
+        random_metrics = MetricRecorder(num_class=numClasses,  prefix='Random', metric_ls=metrics_kwargs['RANDOM'])
 
         # loop over the training set
         tqdm_object = tqdm(trainLoader, total=len(trainLoader), desc=f'Training', colour='#00ff00')
@@ -107,42 +119,45 @@ def main(yaml_file):
 
             image_batch, target = (batch['image'].to(params['DEVICE']), batch['label_' + str(model_kwargs["mode"])].to(params['DEVICE']))
             if  model_kwargs['mode'] == 'regression':
-                target = torch.unsqueeze(target, -1)
+                target = torch.unsqueeze(target, -1).to(params['DEVICE'])
+                print(target)
+
+            
 
             # Compute loss
             out_dict = model(image_batch)
-            logits = out_dict['logits']
-            random_logits = torch.from_numpy(np.random.rand(*logits.shape))
+            logits = out_dict['logits'].to(params['DEVICE'])
+            random_logits = torch.from_numpy(np.random.rand(*logits.shape)).to(params['DEVICE'])
             if  model_kwargs['mode'] == 'regression':
-                crit_loss = criterion(logits, target.type(torch.FloatTensor))
+                crit_loss = criterion(logits, target.type(torch.FloatTensor)).to(params['DEVICE'])
             else:
-                crit_loss = criterion(logits, target)
-
+                crit_loss = criterion(logits, target).to(params['DEVICE'])
 
             # Update weight of model (retropagation)
             optimizer.zero_grad()  # mise a zero des gradients
             if  model_kwargs['mode'] == 'regression':
                 crit_loss.type(torch.FloatTensor).backward()         # Calcul de la loss
+                target = target.type(torch.IntTensor)
             else:
                 crit_loss.backward()  
 
             optimizer.step()        # calcul des gradient et retropagation
 
-            random_metrics.metric_update(logits=random_logits, targets=target)
+            if model_kwargs['mode'] == 'categorical': random_metrics.metric_update(logits=random_logits, targets=target)
             train_metrics.metric_update(logits=logits, targets=target, loss=crit_loss)
         
-
-        mean_train_metrics = train_metrics.compute_array()
-        mean_random_metrics = random_metrics.compute_array()
-        dict_auroc['Training'].append(mean_train_metrics['Auroc'])
-        dict_auroc['Random'].append(mean_random_metrics['Auroc'])
+        train_metrics.compute_array(mean=True)
+        if params['PLOT_AUROC']: dict_auroc['Training'].append(train_metrics.dict_mean['Auroc'])
+        if model_kwargs['mode'] == 'categorical': 
+            random_metrics.compute_array(mean=True, array=False)
+            if params['PLOT_AUROC']: dict_auroc['Random'].append(random_metrics.dict_mean['Auroc'])
 
 ############################### VALIDATION ################################################### 
 
         with torch.no_grad():  # Prevent the optimizer to compute gradients
             model.eval()  # set the model in evaluation mode
         
-            val_metrics = MetricRecorder(num_class=numClasses,  prefix='Validation', metric_ls=[])
+            val_metrics = MetricRecorder(num_class=numClasses,  prefix='Validation', metric_ls=metrics_kwargs['VALIDATION'])
 
             tqdm_object = tqdm(valLoader, total=len(valLoader), desc=f'Validation', colour='blue')
             for batch in tqdm_object:  # loop over the validation set
@@ -150,11 +165,13 @@ def main(yaml_file):
                 # send the input to the device
                 image_batch, target = (batch['image'].to(params['DEVICE']), batch['label_' + str(model_kwargs["mode"])].to(params['DEVICE']))
                 if model_kwargs['mode'] == 'regression':
-                    target = torch.unsqueeze(target, -1)
+                    target = torch.unsqueeze(target, -1).to(params['DEVICE'])
+                    target = target.type(torch.IntTensor)
+                    
                 
                 # make the predictions and calculate the validation loss
                 out_dict = model(image_batch)
-                logits = out_dict['logits']
+                logits = out_dict['logits'].to(params['DEVICE'])
                 crit_loss = criterion(logits, target)
 
                 
@@ -163,10 +180,8 @@ def main(yaml_file):
                 # predictions
                 val_metrics.metric_update(logits=logits, targets=target, loss=crit_loss)
             
-        mean_val_metrics = val_metrics.compute_array()
-        dict_auroc['Validation'].append(mean_val_metrics['Auroc'])
-        print(dict_auroc, flush=True)
-            
+        val_metrics.compute_array(mean=True)
+        if params['PLOT_AUROC']: dict_auroc['Validation'].append(val_metrics.dict_mean['Auroc'])
 
 ####################### RESULTS saving ###########################################
 
@@ -175,60 +190,68 @@ def main(yaml_file):
         if params['MLFLOW']:
             train_metrics.save_mlflow(epoch=epoch+1, mean=False)
             val_metrics.save_mlflow(epoch=epoch+1, mean=False)
-            random_metrics.save_mlflow(epoch=epoch+1, mean=True)
-        
-        if params['PLOT_AUROC']:
-            # print(len(train_metrics), df_train.columns, flush=True)
-            df_train.loc[epoch+1] = train_metrics.dict_array['Auroc']
-            df_val.loc[epoch+1] = val_metrics.dict_array['Auroc']
-            df_random.loc[epoch+1] = random_metrics.dict_array['Auroc']
-
-            # dict_auroc['train'].append(mean_train_metrics)
-            # dict_auroc['random'].append(mean_random_metrics)
-            # dict_auroc['val'].append(mean_val_metrics)
-
+            if model_kwargs['mode'] == 'categorical': random_metrics.save_mlflow(epoch=epoch+1, mean=True)
 
         # recording best weights of the run
-        if mean_val_metrics['Auroc'] > best_valauroc:
-            model_state_dict = model.state_dict()
-            torch.save(model_state_dict, os.path.join(params['OUTPUT_PATH'], 'model.pth'))
-            best_state_dict = {
-                # "model": model.state_dict(),
-                # "optimizer": optimizer.state_dict(),
-                "epoch": epoch +1,
-                "auroc": mean_val_metrics['Auroc'] ,
-            }
-            best_valauroc = mean_val_metrics['Auroc']
-        if mean_val_metrics['Auroc'].mean() > 0.99:
-            n_max += 1
-        else:
-            n_max = 0
-        if n_max >= 5: 
-            print(f'[INFO] AUROC is at max, stopping the run after  {epoch +1 } epochs', flush=True)
-            break
+        if model_kwargs['mode'] == 'categorical': 
+            if val_metrics.dict_mean['Auroc'] > best_metric:
+                model_state_dict = model.state_dict()
+                torch.save(model_state_dict, os.path.join(params['OUTPUT_PATH'], 'model.pth'))
+                best_state_dict = {
+                    # "model": model.state_dict(),
+                    # "optimizer": optimizer.state_dict(),
+                    "epoch": epoch +1,
+                    "metric": val_metrics.dict_mean['Auroc'] ,
+                }
+                best_metric = val_metrics.dict_mean['Auroc']
+            if val_metrics.dict_mean['Auroc'].mean() > 0.99:
+                n_max += 1
+            else:
+                n_max = 0
+            if n_max >= 5: 
+                print(f'[INFO] AUROC is at max, stopping the run after  {epoch +1 } epochs', flush=True)
+                break
+
+        elif model_kwargs['mode'] == 'regression':
+            if val_metrics.dict_mean['Loss'] < best_metric:
+                model_state_dict = model.state_dict()
+                torch.save(model_state_dict, os.path.join(params['OUTPUT_PATH'], 'model.pth'))
+                best_state_dict = {
+                    # "model": model.state_dict(),
+                    # "optimizer": optimizer.state_dict(),
+                    "epoch": epoch +1,
+                    "metric": val_metrics.dict_mean['Loss'] ,
+                }
+                best_metric = val_metrics.dict_mean['Loss']
+            if round(val_metrics.dict_mean['Loss'].mean(), 3) == round(best_metric, 3):
+                n_max += 1
+            else:
+                n_max = 0
+            if n_max >= 5: 
+                print(f'[INFO] Loss is at min, stopping the run after  {epoch +1 } epochs', flush=True)
+                break            
 
 
 ######################### ENDING #####################################
 
     # serialize the model state to disk
-    print('\n[INFO] Best Validation AUROC at epoch ', best_state_dict['epoch'] , ': ', best_state_dict['auroc'], flush=True)
+    print('\n[INFO] Best Training at epoch ', best_state_dict['epoch'] , ': ', best_state_dict['metric'], flush=True)
     # plot_results(H)
     
     if params['MLFLOW']:
         try:
-            mlflow.pytorch.log_state_dict(model_state_dict, artifact_path='best_auroc')
-            mlflow.end_run()
+            mlflow.pytorch.log_state_dict(model_state_dict, artifact_path='best_metric')
+            mlflow.log_param('status', 'finished')
         except Exception as err:
             print( '\nERR state_dict : ' + str(err), flush=True )
+        mlflow.end_run()
     
     if params['PLOT_AUROC']:
         df_auroc = pd.DataFrame(dict_auroc)
-        print(df_auroc.head())
         df_auroc['epochs'] = df_auroc.index + 1
         df_auroc['epochs'] = df_auroc['epochs'].astype(str)
         df_auroc = df_auroc.melt(id_vars=['epochs'])
-        print(df_auroc.head())
-        fig = sns.relplot(data=df_auroc,  x='epochs', y='value', hue='variable', kind='line')
+        fig = sns.relplot(data=df_auroc,  x='epochs', y='value', hue='variable', kind='line', aspect=7)
         try:
             fig.savefig(os.path.join(params['OUTPUT_PATH'], 'AUROC_plot.jpg'), bbox_inches='tight', dpi=100)
         except AttributeError:

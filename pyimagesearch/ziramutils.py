@@ -69,6 +69,7 @@ class ZiramDataset(data.Dataset):
             print(f'[WARN] Number of files ({len(files)}) and dataset files ({dataset_info[filename].nunique()}) not corresponding (files or label missing)')
 
         # dataset_info['img_path'] = dataset_info[filename].map(files_dict)
+        dataset_info = dataset_info[dataset_info[filename].isin(files)]
         dataset_info.dropna(subset=[filename, label], inplace=True)
 
         try:
@@ -84,6 +85,7 @@ class ZiramDataset(data.Dataset):
         self.dataset = dataset_info
         # self.folder = path
         self.im_size = (im_size, im_size)
+        print(dataset_info['label_regression'].unique())
         self.__data = dataset_info[['img_path', 'label_categorical' , 'label_regression']].to_dict('records')
         self.mean, self.std = mean, std
         self.filename = filename

@@ -12,7 +12,11 @@ class Larval_MLClassifier(nn.Module):
         self.freeze = freeze
         self.model_dict = model_dict
         self.baseModel = hub.load(**model_dict)
-        self.encoding_size = self.baseModel.fc.out_features
+        try: 
+            self.features = self.baseModel.fc.out_features
+        except AttributeError:
+            self.features = self.baseModel.classifier[6].out_features
+        self.encoding_size = self.features
         self.mode = mode
 
         # Freeze the base model's weights (and omit last dense layer)
@@ -22,11 +26,12 @@ class Larval_MLClassifier(nn.Module):
                     param.requires_grad = False
 
         #QUESTION : Can we define the regression as a 1 class model ???
+
         if self.mode == 'categorical':
-            self.fc = nn.Linear(self.baseModel.fc.out_features, numClasses)
+            self.fc = nn.Linear(self.features, numClasses)
             self.criterion = nn.CrossEntropyLoss
         elif self.mode == 'regression':
-            self.fc = nn.Linear(self.baseModel.fc.out_features, 1)
+            self.fc = nn.Linear(self.features, 1)
             self.criterion = nn.MSELoss
         
     def forward(self, x):
